@@ -86,7 +86,7 @@ function Map.updateCanvas()
   love.graphics.setCanvas(Map.canvas)
   for y = 1, Map.height do
     for x = 1, Map.width do
-      love.graphics.draw(Map.tileset.image, Map.tileset[Map.grid[y][x]], (x-1) * _tileSize, (y-1) * _tileSize)
+      love.graphics.draw(Map.tileset.image, Map.tileset[Map.grid[y-1][x-1]], (x-1) * _tileSize, (y-1) * _tileSize)
     end
   end
   love.graphics.setCanvas()
