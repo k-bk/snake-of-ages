@@ -1,93 +1,128 @@
-Map = {}
+-- -----------------------
+-- Map:
+--  outer functions:
+--      - draw(tx, ty) - draws the map (all layers) starting from (tx, ty) coordinates
+--      - load(map_name) - loads a ~/maps/name.map file and fills each layer
+--      - updateCanvas(layer) - draws the layer n to canvas n (done with "static" layers in load)
+--  inner functions:
+--      - readTileset - reads the tileset, cuts it into quads
+--      - readLayers(file) - reads map file to build layers into memory
+--
 
--- Genereal properties
-Map.width = nil     -- second line in map file
-Map.height = nil
-Map.grid = {
-  { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2},
-  { 0, 0, 0, 1, 0, 2, 0, 0, 0, 0, 1, 0, 2, 0, 0, 1, 0},
-  { 0, 0, 2, 0, 0, 2, 1, 0, 0, 2, 0, 0, 2, 1, 0, 0, 0},
-  { 2, 0, 2, 0, 0, 2, 0, 0, 0, 2, 0, 0, 2, 0, 0, 0, 2},
-  { 2, 0, 0, 0, 0, 2, 2, 2, 0, 0, 0, 0, 2, 2, 2, 2, 2},
-  { 2, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 2},
-  { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-  { 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 2, 2, 0},
-  { 2, 0, 1, 0, 0, 0, 0, 2, 0, 1, 0, 0, 0, 0, 2, 2, 0},
-  { 0, 0, 2, 0, 0, 2, 1, 0, 0, 2, 0, 0, 2, 1, 0, 0, 0},
-  { 2, 0, 2, 0, 0, 2, 0, 0, 0, 2, 0, 0, 2, 0, 0, 0, 2},
-  { 2, 0, 0, 0, 0, 2, 2, 2, 0, 0, 0, 0, 2, 2, 2, 2, 2},
-  { 2, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 2},
-  { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-  { 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 2, 2, 0},
-  { 2, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0}
+Map = {
+  width = nil,
+  height = nil,
+  layers = {},
+  tileset = {}
 }
 
-Map.eventLayer = {}
+function Map.draw(tx, ty)
 
-function Map.draw()
+  tx = tx or 0
+  ty = ty or 0
 
-  love.graphics.draw(Map.canvas, 0, 0)
-end
-
-function Map.prepareTiles()
-
-  -- set canvas
-  Map.canvas = love.graphics.newCanvas(Map.width * _tileSize, Map.height * _tileSize)
-
-  -- Cut tileset into single tiles and read flags
-  io.input("maps/" .. Map.tileset.name)
-  local tileset_width = io.read("*number", "*l") 
-  local flag_str = io.read()
-  -- Compare sizes
-  if tileset_width ~= love.graphics.getWidth(Map.tileset.image) / _tileSize then
-    assert("Tileset size in px does not match size given in maps/" .. Map.tileset.name .. " file")
+  for _, layer in ipairs(Map.layers) do
+    if layer.tag ~= "static" then
+      updateCanvas(layer)
   end
 
-  for i = 0, tileset_width-1 do
-    local tile = love.graphics.newQuad(i*_tileSize, 0, _tileSize, _tileSize, Map.tileset.image:getDimensions()) 
-    Map.tileset[i] = tile
-    Map.tileset.flags[i] = flag_str[i]
+  for _, layer in ipairs(Map.layers) do
+    love.graphics.draw(layer.canvas)
   end
-
 end
 
-function Map.load(mapName)
+function Map.load(map_name)
 
-  io.input("maps/" .. mapName)
-  local tileset_name = io.read()
+  io.input("maps/" .. map_name .. ".map")
+  local file = io.read("*a")
 
-  Map.tileset = {
-    name = tileset_name,
-    image = love.graphics.newImage("gfx/" .. tileset_name .. ".png"),
-    flags = {},
-  }
-  Map.width = io.read("*number")
-  Map.height = io.read("*number", "*l")
+  -- find tileset name
+  local tileset_name = string.match(file, "tileset:%s*(%a+%.%a+)")
+  Map.readTileset(tileset_name)
 
-  -- load map to array
-  for i = 1,Map.height do
-    Map.grid[i] = {}
-    local row = io.read()
-    for j = 1,#row do 
-      Map.grid[i][j] = row[j]
+  -- find map dimensions
+  Map.width = string.match(file, "width:%s*(%d+)")
+  Map.height = string.match(file, "height:%s*(%d+)")
+
+  -- read layers to memory
+  Map.readLayers(file)
+
+  -- draw static layers to canvases
+  for _, layer in ipairs(Map.layers) do
+    if layer.tag == "static" then
+      updateCanvas(layer)
+    end
+  end
+end
+
+function Map.readLayers(file)
+
+  -- Clear layers 
+  Map.layers = {}
+
+  -- find layers tag (static/dynamic) and put into grid the "grid" chunk of file
+  for tag, grid in string.gmatch(file, "layer:%s*(%a+)%s*{%s*(.-)%s*}") do
+
+    -- make new layer every time keyword "layer:" is found
+    table.insert(Map.layers, {})
+    local layer = Map.layers[#Map.layers]
+    layer.tag = tag
+
+    -- go through the lines of grid
+    for line in string.gmatch(grid, "[^\r\n]+") do
+      table.insert(layer, {})
+      row = layer[#layer]
+
+      -- for every line of grid insert space separated numbers
+      for value in string.gmatch(line, "%d+") do
+        table.insert(row, value)
+      end
+
+    end
+  end
+end
+
+function Map.readTileset(tileset_name)
+
+  io.input("maps/" .. tileset_name)
+  local file = io.read("*a")
+
+  -- find size of tileset
+  local width = string.match(file, "width:%s*(%d+)")
+  local height = string.match(file, "height:%s*(%d+)")
+
+  -- read image of tileset
+  local image_name = string.match(file, "image:%s*(%d+)")
+  Map.tileset.image = love.graphics.newImage("gfx/" .. image_name)
+  for i = 0, height - 1 do
+    for j = 0, width - 1 do
+      Map.tileset[i * width + j] = love.graphics.newQuad(
+        j * _tileSize, 
+        i * _tileSize, 
+        _tileSize, 
+        _tileSize, 
+        Map.tileset.image:getDimensions()
+        )
+    end
+  end
+end
+
+function Map.updateCanvas(layer)
+
+  layer.canvas = love.graphics.newCanvas(Map.width * _tileSize, Map.height * _tileSize)
+  love.graphics.setCanvas(layer.canvas)
+
+  for i = 1, Map.height do
+    for j = 1, Map.width do
+      love.graphics.draw(
+        Map.tileset[layer[i][j]], 
+        (j - 1) * _tileSize,
+        (i - 1) * _tileSize
+        )
     end
   end
 
-  Map.prepareTiles()
-end
-
-function Map.getFlag(x, y)
-
-  return Map.tileset.flags[Map.grid[x][y]]
-end
-
-function Map.updateCanvas()
-
-  love.graphics.setCanvas(Map.canvas)
-  for y = 1, Map.height do
-    for x = 1, Map.width do
-      love.graphics.draw(Map.tileset.image, Map.tileset[Map.grid[y-1][x-1]], (x-1) * _tileSize, (y-1) * _tileSize)
-    end
-  end
+  -- return to basic canvas
   love.graphics.setCanvas()
 end
+return Map

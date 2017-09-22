@@ -13,9 +13,7 @@ function love.load()
     _tileSize = 32
     _points = 0
 
-    love.graphics.setBackgroundColor(255,255,255)
     Map.load("map1")
-    Map.updateCanvas()
     player = Player()
 end
 
